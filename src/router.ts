@@ -15,10 +15,10 @@
 //   - const [path] = (req.url ?? "/").split("?", 2)
 //   - const segments = (path ?? "/").split("/").filter(Boolean)
 
-import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Pool } from "pg";
 import { MovieRepository } from "./Infrastructure/MovieRepository";
 import { ScreeningRepository } from "./Infrastructure/ScreeningRepository";
+import type { Express, Request, Response } from "express";
 
 export type RouterDeps = {
   pool: Pool;
@@ -26,50 +26,38 @@ export type RouterDeps = {
   screenings: ScreeningRepository;
 };
 
-export async function router(
-  req: IncomingMessage,
-  res: ServerResponse,
-  deps: RouterDeps
-): Promise<void> {
-  const method = req.method ?? "GET";
-  const rawUrl = req.url ?? "/";
-  const path = rawUrl.split("?", 2)[0] ?? "/";
-  const segments = path.split("/").filter(Boolean);
-
-  function sendJson(status: number, data: unknown): void {
-    res.writeHead(status, { "content-type": "application/json; charset=utf-8" });
-    res.end(JSON.stringify(data));
+export function router(app: Express, deps: RouterDeps): void {
+  function sendJson(res: Response, status: number, data: unknown): void {
+    res.status(status).json(data);
   }
 
-  function sendError(status: number, message: string): void {
-    sendJson(status, { ok: false, error: message });
+  function sendError(res: Response, status: number, message: string): void {
+    sendJson(res, status, { ok: false, error: message });
   }
 
-  if (method === "GET" && path === "/") {
-    return sendJson(200, { ok: true, message: "Movie API" });
-  }
-  
-  if (method === "GET" && path === "/health") {
-    return sendJson(200, { ok: true });
-  }
+  app.get("/", (req: Request, res: Response) => {
+    sendJson(res, 200, { ok: true, message: "Movie API" });
+  });
 
-  if (method === "GET" && path === "/movies") {
+  app.get("/health", (req: Request, res: Response) => {
+    sendJson(res, 200, { ok: true });
+  });
+
+  app.get("/movies", async (req: Request, res: Response) => {
     const items = await deps.movies.list();
-    return sendJson(200, { ok: true, items });
-  }
+    sendJson(res, 200, { ok: true, items });
+  });
 
-  if (
-    method === "GET" &&
-    segments[0] === "movies" &&
-    (segments[2] === "screenings" || segments[2] === "seances")
-  ) {
-    const movieId = Number(segments[1]);
+  app.get("/movies/:id/screenings", async (req: Request, res: Response) => {
+    const movieId = Number(req.params.id);
     if (Number.isNaN(movieId)) {
-      return sendError(400, "Invalid movie id");
+      return sendError(res, 400, "Invalid movie id");
     }
     const items = await deps.screenings.listByMovieId(movieId);
-    return sendJson(200, { ok: true, items });
-  }
+    sendJson(res, 200, { ok: true, items });
+  });
 
-  return sendError(404, "Not Found");
+  app.use((req: Request, res: Response) => {
+    sendError(res, 404, "Not Found");
+  });
 }
